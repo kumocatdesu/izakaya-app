@@ -81,7 +81,7 @@ class MainWindow(QMainWindow):
             "ウィスキー": [("ハイボール", 480), ("コークハイ", 500), ("ジンジャーハイ", 500), ("水割り", 450)],
             "ソフトドリンク": [("コーラ", 250), ("オレンジジュース", 250), ("ウーロン茶", 200), ("緑茶", 200), ("カルピス", 250), ("ジンジャーエール", 250)],
             "備品": [("おしぼり", 50), ("割り箸", 20), ("小皿", 10)]
-        } 
+        }
         
         self.kks = pykakasi.kakasi()
         self.menu_hiragana_dict = self.generate_hiragana_map()
@@ -156,8 +156,6 @@ class MainWindow(QMainWindow):
         self.menu_scroll_area.setWidget(self.menu_container_widget)
         order_layout.addWidget(self.menu_scroll_area)
         
-        self.populate_menu_buttons(self.categorized_menu)
-        
         self.ordered_items_label = QLabel("注文済みの商品:")
         self.ordered_items_label.setStyleSheet("font-weight: bold;")
         order_layout.addWidget(self.ordered_items_label)
@@ -173,7 +171,7 @@ class MainWindow(QMainWindow):
         bottom_button_layout = QHBoxLayout()
         back_to_details_button = QPushButton("戻る")
         back_to_details_button.setStyleSheet("font-size: 18px; font-weight: bold; background-color: #f44336; color: white; padding: 15px;")
-        back_to_details_button.clicked.connect(lambda: self.show_order_details_view(self.current_table))
+        back_to_details_button.clicked.connect(self.go_back_from_order_view)
 
         save_order_button = QPushButton("追加")
         save_order_button.setStyleSheet("font-size: 18px; font-weight: bold; background-color: #4CAF50; color: white; padding: 15px;")
@@ -246,11 +244,6 @@ class MainWindow(QMainWindow):
         self.details_layout = QVBoxLayout()
         self.order_details_widget.setLayout(self.details_layout)
 
-        back_button = QPushButton("戻る")
-        back_button.setStyleSheet("font-size: 16px; padding: 10px;")
-        back_button.clicked.connect(self.show_table_selection_view)
-        self.details_layout.addWidget(back_button)
-
         self.details_table_label = QLabel("")
         self.details_table_label.setStyleSheet("font-size: 20px; font-weight: bold;")
         self.details_layout.addWidget(self.details_table_label)
@@ -267,19 +260,25 @@ class MainWindow(QMainWindow):
         self.total_summary_label.setStyleSheet("font-size: 16px; font-weight: bold;")
         self.details_layout.addWidget(self.total_summary_label)
 
-        button_layout = QHBoxLayout()
+        bottom_button_layout = QHBoxLayout()
 
+        back_button = QPushButton("戻る")
+        back_button.setStyleSheet("font-size: 18px; font-weight: bold; background-color: #f44336; color: white; padding: 15px;")
+        back_button.clicked.connect(self.show_table_selection_view)
+        
         add_button = QPushButton("追加")
         add_button.setStyleSheet("font-size: 18px; font-weight: bold; background-color: #FFA500; color: white; padding: 15px;")
         add_button.clicked.connect(self.add_to_existing_order)
-        button_layout.addWidget(add_button)
         
         checkout_button = QPushButton("会計")
         checkout_button.setStyleSheet("font-size: 18px; font-weight: bold; background-color: #28a745; color: white; padding: 15px;")
         checkout_button.clicked.connect(self.show_checkout_view)
-        button_layout.addWidget(checkout_button)
+        
+        bottom_button_layout.addWidget(back_button)
+        bottom_button_layout.addWidget(add_button)
+        bottom_button_layout.addWidget(checkout_button)
 
-        self.details_layout.addLayout(button_layout)
+        self.details_layout.addLayout(bottom_button_layout)
         
         self.main_layout.addWidget(self.order_details_widget)
         self.order_details_widget.hide()
@@ -338,15 +337,29 @@ class MainWindow(QMainWindow):
         self.search_input.clear()
         self.populate_menu_buttons(self.categorized_menu)
     
+    def go_back_from_order_view(self):
+        """注文入力画面から戻る際の遷移を制御する"""
+        if self.db_manager.is_table_occupied(self.current_table):
+            self.show_order_details_view(self.current_table)
+        else:
+            self.show_table_selection_view()
+
     def show_order_details_view(self, table_number):
         """注文内容確認画面を構築する"""
         self.current_table = table_number
         self.details_table_label.setText(f"席番号: {table_number} の注文")
         
+        # 既存のウィジェットをすべて削除
         for i in reversed(range(self.details_container_layout.count())):
-            widget = self.details_container_layout.itemAt(i).widget()
-            if widget:
-                widget.setParent(None)
+            item = self.details_container_layout.itemAt(i)
+            if item.widget():
+                item.widget().setParent(None)
+            elif item.layout():
+                while item.layout().count():
+                    child = item.layout().takeAt(0)
+                    if child.widget():
+                        child.widget().deleteLater()
+                self.details_container_layout.removeItem(item)
 
         orders = self.db_manager.get_orders_by_table(table_number)
         
@@ -364,38 +377,53 @@ class MainWindow(QMainWindow):
         total_items = 0
         total_price = 0
 
-        for category, menu_list in self.categorized_menu.items():
-            category_items = {item_name: count for item_name, count in order_summary.items() if any(item_name == m[0] for m in menu_list)}
-            if not category_items:
-                continue
+        # レイアウトの間隔を0に設定
+        self.details_container_layout.setSpacing(0)
+        
+        # 商品を一つずつ追加し、＋－削除ボタンを配置
+        for item_name, count in order_summary.items():
+            item_widget = QWidget()
+            h_layout = QHBoxLayout()
             
-            category_label = QLabel(category)
-            category_label.setStyleSheet("font-size: 18px; font-weight: bold; margin-top: 10px;")
-            self.details_container_layout.addWidget(category_label)
+            price = self.menu_dict.get(item_name, 0)
+            subtotal = price * count
             
-            category_table = QTableWidget()
-            category_table.setColumnCount(4)
-            category_table.setHorizontalHeaderLabels(["商品名", "個数", "単価", "合計"])
-            header = category_table.horizontalHeader()
-            header.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-            category_table.setRowCount(len(category_items))
+            label = QLabel(f"{item_name}")
+            count_label = QLabel(f"x {count}")
+            price_label = QLabel(f"({int(price)}円)")
+            
+            label.setStyleSheet("font-weight: bold; min-width: 80px;")
+            count_label.setStyleSheet("min-width: 30px;")
+            price_label.setStyleSheet("min-width: 60px;")
 
-            for row, (item_name, count) in enumerate(category_items.items()):
-                price = self.menu_dict.get(item_name, 0)
-                subtotal = price * count
-                
-                category_table.setItem(row, 0, QTableWidgetItem(item_name))
-                category_table.setItem(row, 1, QTableWidgetItem(str(count)))
-                category_table.setItem(row, 2, QTableWidgetItem(str(int(price)) + "円"))
-                category_table.setItem(row, 3, QTableWidgetItem(str(int(subtotal)) + "円"))
-                
-                total_items += count
-                total_price += subtotal
+            plus_button = QPushButton("+")
+            plus_button.clicked.connect(lambda _, n=item_name: self.add_to_order_list_from_details(n))
+            plus_button.setFixedSize(25, 25)
             
-            category_table.setFixedHeight(category_table.rowHeight(0) * (category_table.rowCount() + 1))
-            self.details_container_layout.addWidget(category_table)
+            minus_button = QPushButton("-")
+            minus_button.clicked.connect(lambda _, n=item_name: self.remove_order_item_from_details(n))
+            minus_button.setFixedSize(25, 25)
+
+            delete_button = QPushButton("削除")
+            delete_button.clicked.connect(lambda _, n=item_name: self.delete_order_item_from_details(n))
+
+            h_layout.addWidget(label)
+            h_layout.addWidget(count_label)
+            h_layout.addWidget(price_label)
+            h_layout.addStretch(1)
+            h_layout.addWidget(plus_button)
+            h_layout.addWidget(minus_button)
+            h_layout.addWidget(delete_button)
+            h_layout.setContentsMargins(0, 0, 0, 0)
+            item_widget.setLayout(h_layout)
             
-        self.current_order = order_summary
+            self.details_container_layout.addWidget(item_widget)
+
+            total_items += count
+            total_price += subtotal
+        
+        # レイアウトの下部にスペースを追加して、要素を上部に寄せる
+        self.details_container_layout.addStretch(1)
 
         self.total_summary_label.setText(f"合計：{total_items}個 / {int(total_price)}円")
         
@@ -404,10 +432,17 @@ class MainWindow(QMainWindow):
         self.checkout_widget.hide()
         self.order_details_widget.show()
 
-    def show_edit_view(self):
-        """追加注文のために注文入力画面に戻る"""
-        self.show_order_view(self.current_table)
-        self.update_ordered_list()
+    def add_to_order_list_from_details(self, item_name):
+        self.db_manager.add_order(self.current_table, [item_name])
+        self.show_order_details_view(self.current_table)
+
+    def remove_order_item_from_details(self, item_name):
+        self.db_manager.remove_order_item(self.current_table, item_name)
+        self.show_order_details_view(self.current_table)
+
+    def delete_order_item_from_details(self, item_name):
+        self.db_manager.delete_order_item(self.current_table, item_name)
+        self.show_order_details_view(self.current_table)
 
     def update_total_price(self):
         """注文リストの合計金額を更新する"""
@@ -535,7 +570,6 @@ class MainWindow(QMainWindow):
 
         orders = self.db_manager.get_orders_by_table(self.current_table)
         
-        # 注文内容をまとめ直す
         order_summary = OrderedDict()
         for item in orders:
             item_name = item[0] if isinstance(item, tuple) else str(item)
