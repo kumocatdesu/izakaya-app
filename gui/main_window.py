@@ -1,5 +1,5 @@
 # gui/main_window.py
-from PyQt6.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QPushButton, QLabel, QLineEdit, QGridLayout, QHBoxLayout, QScrollArea
+from PyQt6.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QPushButton, QLabel, QLineEdit, QGridLayout, QHBoxLayout, QScrollArea, QListWidget, QListWidgetItem, QTableWidget, QHeaderView, QTableWidgetItem
 from gui.components import OrderButton, MenuItem
 from database.db_manager import DatabaseManager
 from ml.handwriting_recognizer import HandwritingRecognizer
@@ -7,27 +7,27 @@ from ml.recommendation import RecommendationEngine
 import os
 import sys
 from PyQt6.QtCore import QCoreApplication
+from collections import OrderedDict
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        # ウィンドウサイズをスマホサイズに変更
         self.setWindowTitle("居酒屋Handyアプリ")
         self.setGeometry(100, 100, 400, 800)
         self.current_table = None
-        self.current_order = []
+        self.current_order = OrderedDict() # 注文内容を OrderedDict で管理
 
         self.db_manager = DatabaseManager("izakaya.db")
         self.recognizer = HandwritingRecognizer()
         self.recommender = RecommendationEngine()
         self.menu_items = self.db_manager.search_menu("")
+        self.menu_dict = {item[0]: item[1] for item in self.menu_items} # メニュー名をキーにした辞書
         
         self.stacked_widget = QWidget()
         self.setCentralWidget(self.stacked_widget)
         self.main_layout = QVBoxLayout()
         self.stacked_widget.setLayout(self.main_layout)
         
-        # 席番号ボタンを辞書で管理
         self.table_buttons = {}
 
         self.create_table_selection_view()
@@ -42,14 +42,10 @@ class MainWindow(QMainWindow):
         table_layout = QGridLayout()
         self.table_selection_widget.setLayout(table_layout)
 
-        # 「席番号を選んでください」のラベルを削除
-        
-        # 席の数を36席に変更し、グリッドの列数を調整
         for i in range(1, 37):
             button = QPushButton(str(i))
             button.setStyleSheet("font-size: 18px; height: 50px;")
             button.clicked.connect(self.select_table)
-            # グリッドレイアウトを6列で表示
             row = (i - 1) // 6
             col = (i - 1) % 6
             table_layout.addWidget(button, row, col)
@@ -64,7 +60,6 @@ class MainWindow(QMainWindow):
         order_layout = QVBoxLayout()
         self.order_widget.setLayout(order_layout)
 
-        # 戻るボタン
         back_button = QPushButton("戻る")
         back_button.setStyleSheet("font-size: 16px; padding: 10px;")
         back_button.clicked.connect(self.show_table_selection_view)
@@ -74,7 +69,6 @@ class MainWindow(QMainWindow):
         self.table_number_label.setStyleSheet("font-size: 20px; font-weight: bold;")
         order_layout.addWidget(self.table_number_label)
 
-        # 商品リスト
         menu_scroll_area = QScrollArea()
         menu_scroll_area.setWidgetResizable(True)
         menu_widget = QWidget()
@@ -85,7 +79,6 @@ class MainWindow(QMainWindow):
             button = QPushButton(f"{name} ({int(price)}円)")
             button.clicked.connect(self.add_to_order)
             button.setProperty("item_name", name)
-            # グリッドレイアウトを2列で表示
             row = i // 2
             col = i % 2
             menu_layout.addWidget(button, row, col)
@@ -93,15 +86,14 @@ class MainWindow(QMainWindow):
         menu_scroll_area.setWidget(menu_widget)
         order_layout.addWidget(menu_scroll_area)
 
-        # 注文済み商品リスト
         self.ordered_items_label = QLabel("注文済みの商品:")
         self.ordered_items_label.setStyleSheet("font-weight: bold;")
         order_layout.addWidget(self.ordered_items_label)
 
-        self.ordered_items_list = QLabel("")
-        order_layout.addWidget(self.ordered_items_list)
+        # QListWidget を使用して、注文リストと削除ボタンを管理
+        self.ordered_items_list_widget = QListWidget()
+        order_layout.addWidget(self.ordered_items_list_widget)
 
-        # 注文確定ボタン
         order_complete_button = QPushButton("注文を確定")
         order_complete_button.setStyleSheet("font-size: 18px; font-weight: bold; background-color: #4CAF50; color: white; padding: 15px;")
         order_complete_button.clicked.connect(self.save_order)
@@ -116,7 +108,6 @@ class MainWindow(QMainWindow):
         details_layout = QVBoxLayout()
         self.order_details_widget.setLayout(details_layout)
 
-        # 戻るボタン
         back_button = QPushButton("戻る")
         back_button.setStyleSheet("font-size: 16px; padding: 10px;")
         back_button.clicked.connect(self.show_table_selection_view)
@@ -126,19 +117,25 @@ class MainWindow(QMainWindow):
         self.details_table_label.setStyleSheet("font-size: 20px; font-weight: bold;")
         details_layout.addWidget(self.details_table_label)
 
-        self.details_list_label = QLabel("")
-        details_layout.addWidget(self.details_list_label)
+        # 注文内容詳細表示にQTableWidgetを使用
+        self.details_table_widget = QTableWidget()
+        self.details_table_widget.setColumnCount(4)
+        self.details_table_widget.setHorizontalHeaderLabels(["商品名", "個数", "単価", "合計"])
+        header = self.details_table_widget.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        details_layout.addWidget(self.details_table_widget)
+        
+        self.total_summary_label = QLabel("")
+        self.total_summary_label.setStyleSheet("font-size: 16px; font-weight: bold;")
+        details_layout.addWidget(self.total_summary_label)
 
-        # 追加ボタンと会計ボタンを水平に配置する
         button_layout = QHBoxLayout()
 
-        # 追加ボタン
         add_button = QPushButton("追加")
         add_button.setStyleSheet("font-size: 18px; font-weight: bold; background-color: #FFA500; color: white; padding: 15px;")
         add_button.clicked.connect(self.add_to_existing_order)
         button_layout.addWidget(add_button)
         
-        # 会計ボタン
         checkout_button = QPushButton("会計")
         checkout_button.setStyleSheet("font-size: 18px; font-weight: bold; background-color: #28a745; color: white; padding: 15px;")
         checkout_button.clicked.connect(self.checkout_table)
@@ -154,7 +151,7 @@ class MainWindow(QMainWindow):
         self.table_selection_widget.show()
         self.order_widget.hide()
         self.order_details_widget.hide()
-        self.current_order = []
+        self.current_order = OrderedDict()
         self.update_ordered_list()
         self.update_table_colors()
 
@@ -170,10 +167,36 @@ class MainWindow(QMainWindow):
         """注文内容確認画面を表示する"""
         self.current_table = table_number
         self.details_table_label.setText(f"席番号: {table_number} の注文")
+        
         orders = self.db_manager.get_orders_by_table(table_number)
-        ordered_items = [item[0] for item in orders]
-        details_text = "\n".join(ordered_items)
-        self.details_list_label.setText(details_text)
+
+        # 注文内容を商品ごとに集計
+        order_summary = OrderedDict()
+        if orders:
+            for item in orders:
+                if isinstance(item, tuple) and len(item) > 0:
+                    item_name = item[0]
+                else:
+                    item_name = str(item)
+                order_summary[item_name] = order_summary.get(item_name, 0) + 1
+            
+        self.details_table_widget.setRowCount(len(order_summary))
+        total_items = 0
+        total_price = 0
+        
+        for row, (item_name, count) in enumerate(order_summary.items()):
+            price = self.menu_dict.get(item_name, 0)
+            subtotal = price * count
+            
+            self.details_table_widget.setItem(row, 0, QTableWidgetItem(item_name))
+            self.details_table_widget.setItem(row, 1, QTableWidgetItem(str(count)))
+            self.details_table_widget.setItem(row, 2, QTableWidgetItem(str(int(price)) + "円"))
+            self.details_table_widget.setItem(row, 3, QTableWidgetItem(str(int(subtotal)) + "円"))
+            
+            total_items += count
+            total_price += subtotal
+            
+        self.total_summary_label.setText(f"合計：{total_items}個 / {int(total_price)}円")
         
         self.table_selection_widget.hide()
         self.order_widget.hide()
@@ -185,26 +208,50 @@ class MainWindow(QMainWindow):
         table_number = sender.text()
         
         if self.db_manager.is_table_occupied(table_number):
-            # 注文がある場合は、注文確認画面へ
             self.show_order_details_view(table_number)
         else:
-            # 注文がない場合は、注文入力画面へ
             self.show_order_view(table_number)
 
     def add_to_order(self):
         """メニューボタンが押されたときに注文リストに追加する"""
         sender = self.sender()
         item_name = sender.property("item_name")
-        self.current_order.append(item_name)
+        self.current_order[item_name] = self.current_order.get(item_name, 0) + 1
+        self.update_ordered_list()
+
+    def remove_order_item(self, item_name):
+        """注文リストから商品を削除する"""
+        if self.current_order[item_name] > 1:
+            self.current_order[item_name] -= 1
+        else:
+            del self.current_order[item_name]
         self.update_ordered_list()
 
     def update_ordered_list(self):
         """注文リストの表示を更新する"""
+        self.ordered_items_list_widget.clear()
         if not self.current_order:
-            self.ordered_items_list.setText("---")
+            item = QListWidgetItem("---")
+            self.ordered_items_list_widget.addItem(item)
         else:
-            ordered_text = "\n".join(self.current_order)
-            self.ordered_items_list.setText(ordered_text)
+            for item_name, count in self.current_order.items():
+                item_widget = QWidget()
+                h_layout = QHBoxLayout()
+                
+                label = QLabel(f"{item_name} ({count})")
+                delete_button = QPushButton("削除")
+                delete_button.clicked.connect(lambda _, name=item_name: self.remove_order_item(name))
+                
+                h_layout.addWidget(label)
+                h_layout.addStretch()
+                h_layout.addWidget(delete_button)
+                h_layout.setContentsMargins(0, 0, 0, 0)
+                item_widget.setLayout(h_layout)
+                
+                list_item = QListWidgetItem()
+                list_item.setSizeHint(item_widget.sizeHint())
+                self.ordered_items_list_widget.addItem(list_item)
+                self.ordered_items_list_widget.setItemWidget(list_item, item_widget)
 
     def save_order(self):
         """注文を保存して席番号選択画面に戻る"""
@@ -212,7 +259,11 @@ class MainWindow(QMainWindow):
             print("注文する商品がありません。")
             return
 
-        self.db_manager.add_order(self.current_table, self.current_order)
+        order_list_to_save = []
+        for item_name, count in self.current_order.items():
+            order_list_to_save.extend([item_name] * count)
+            
+        self.db_manager.add_order(self.current_table, order_list_to_save)
         print(f"席番号 {self.current_table} の注文を保存しました。")
         
         self.show_table_selection_view()
